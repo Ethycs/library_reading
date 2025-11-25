@@ -17,3 +17,6 @@ platforms = ["win-64"]
 library_reading = { path = ".", editable = true }
 
 [tool.pixi.tasks]
+
+[tool.pixi.dependencies]
+pandas = ">=2.3.3,<3"
