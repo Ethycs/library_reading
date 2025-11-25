@@ -20,3 +20,5 @@ library_reading = { path = ".", editable = true }
 
 [tool.pixi.dependencies]
 pandas = ">=2.3.3,<3"
+litellm = ">=1.80.5,<2"
+python-dotenv = ">=1.2.1,<2"
