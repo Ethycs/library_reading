@@ -25,6 +25,7 @@ from experiment_harness import (
     next_book_recs,
     popularity_recs,
     librarian_picks_recs,
+    hybrid_fallback_recs,
 )
 
 
@@ -208,6 +209,12 @@ def demo():
             bid=1.0,
             func=librarian_picks_recs,
             default_kwargs=dict(checkouts=checkouts, catalog=catalog, k=3),
+        ),
+        Strategy(
+            name="hybrid_fallback",
+            bid=1.5,
+            func=hybrid_fallback_recs,
+            default_kwargs=dict(checkouts=checkouts, transitions=transitions, catalog=catalog, k=3),
         ),
     ]
     

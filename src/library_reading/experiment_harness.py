@@ -190,6 +190,76 @@ def librarian_picks_recs(
     return merged[["book_id", "score"]]
 
 
+def hybrid_fallback_recs(
+    student_id: str,
+    checkouts: pd.DataFrame,
+    transitions: pd.DataFrame,
+    catalog: pd.DataFrame,
+    k: int = 3,
+) -> pd.DataFrame:
+    """
+    Strategy: hybrid_fallback (from basic_demo.py)
+    
+    Multi-level fallback strategy:
+    1. Transition-based (Markov model from last book)
+    2. Popularity-based (most checked-out unread books)
+    3. Librarian recommendations (curated picks)
+    4. Random unread books (exploration)
+    
+    This strategy is more robust to sparse data than pure transition-based
+    recommendations, as it gracefully falls back when no transitions exist.
+    
+    Returns DataFrame with book_id and score columns.
+    """
+    import random
+    
+    user_hist = get_user_history(student_id, checkouts)
+    if user_hist.empty:
+        return pd.DataFrame(columns=["book_id", "score"])
+
+    last_book = user_hist.iloc[-1]["book_id"]
+    user_read_books = set(user_hist["book_id"].tolist())
+
+    # Strategy 1: Transition-based (primary)
+    candidates = transitions[transitions["current_book"] == last_book]
+    if not candidates.empty:
+        top = candidates.sort_values("prob", ascending=False).head(k)
+        result = top[["next_book", "prob"]].rename(columns={"next_book": "book_id", "prob": "score"})
+        return result
+
+    # Strategy 2: Popularity-based fallback
+    popularity = (
+        checkouts.groupby("book_id")
+        .size()
+        .reset_index(name="checkout_count")
+        .sort_values("checkout_count", ascending=False)
+    )
+    unread_popular = popularity[~popularity["book_id"].isin(user_read_books)]
+    if not unread_popular.empty:
+        result = unread_popular.head(k)[["book_id", "checkout_count"]].rename(columns={"checkout_count": "score"})
+        # Normalize scores to 0-1 range for consistency
+        if not result.empty and result["score"].max() > 0:
+            result["score"] = result["score"] / result["score"].max()
+        return result
+
+    # Strategy 3: Librarian recommendations fallback
+    librarian_books = catalog[catalog["librarian_pick"]]["book_id"].tolist()
+    unread_librarian = [book for book in librarian_books if book not in user_read_books]
+    if unread_librarian:
+        result_data = [(book, 1.0) for book in unread_librarian[:k]]
+        return pd.DataFrame(result_data, columns=["book_id", "score"])
+
+    # Strategy 4: Random unread books (last resort exploration)
+    all_books = catalog["book_id"].tolist()
+    unread_books = [book for book in all_books if book not in user_read_books]
+    if unread_books:
+        random.shuffle(unread_books)
+        result_data = [(book, 1.0) for book in unread_books[:k]]
+        return pd.DataFrame(result_data, columns=["book_id", "score"])
+
+    return pd.DataFrame(columns=["book_id", "score"])
+
+
 # --------------------------------------------------------------------
 # 4. Strategy wrapper (with bids)
 # --------------------------------------------------------------------
@@ -336,6 +406,12 @@ def main():
             bid=1.0,
             func=librarian_picks_recs,
             default_kwargs=dict(checkouts=checkouts, catalog=catalog, k=3),
+        ),
+        Strategy(
+            name="hybrid_fallback",
+            bid=1.5,  # higher bid - more robust with fallback logic
+            func=hybrid_fallback_recs,
+            default_kwargs=dict(checkouts=checkouts, transitions=transitions, catalog=catalog, k=3),
         ),
     ]
 

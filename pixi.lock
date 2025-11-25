@@ -733,7 +733,7 @@ packages:
 - pypi: ./
   name: library-reading
   version: 0.1.0
-  sha256: 39eed5fd6156a26e9b83baea0812b07693428faff15760bf38b378855ab52afa
+  sha256: f2e05f3d385f45a618abfb40fb04cccfee079365dfd407d537259bdfdcb96721
   requires_python: '>=3.11'
   editable: true
 - conda: https://conda.anaconda.org/conda-forge/win-64/libsqlite-3.51.0-hf5d6505_0.conda
