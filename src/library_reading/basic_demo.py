@@ -14,6 +14,7 @@ Run:
 from collections import Counter
 from typing import List
 import pandas as pd
+import random
 
 
 def load_checkout_history() -> pd.DataFrame:
@@ -39,6 +40,25 @@ def load_checkout_history() -> pd.DataFrame:
     df = pd.DataFrame(data, columns=["user_id", "book_id", "timestamp"])
     df["timestamp"] = pd.to_datetime(df["timestamp"])
     return df
+
+
+def load_librarian_recommendations() -> List[str]:
+    """
+    Load librarian's curated recommendations.
+    In a real setting, this would come from a database or file.
+    """
+    return ["b6", "b7", "b8", "b9", "b10"]
+
+
+def get_all_books(checkouts: pd.DataFrame) -> List[str]:
+    """
+    Get all unique books from checkout history.
+    In a real setting, this would include the full catalog.
+    """
+    # Combine books from checkout history and librarian recommendations
+    checkout_books = checkouts["book_id"].unique().tolist()
+    librarian_books = load_librarian_recommendations()
+    return list(set(checkout_books + librarian_books))
 
 
 def build_transition_model(checkouts: pd.DataFrame) -> pd.DataFrame:
@@ -92,6 +112,8 @@ def recommend_next_books_for_user(
     - Look up all next_book candidates for that current_book.
     - Rank by probability.
     - Return top-k book_ids.
+    - If no recommendations, fall back to librarian recommendations.
+    - If all librarian recommendations are read, choose randomly from unread books.
     """
     user_hist = (
         checkouts[checkouts["user_id"] == user_id]
@@ -101,11 +123,27 @@ def recommend_next_books_for_user(
         return []
 
     last_book = user_hist.iloc[-1]["book_id"]
+    user_read_books = set(user_hist["book_id"].tolist())
 
     # all transitions from last_book
     candidates = transitions[transitions["current_book"] == last_book]
 
     if candidates.empty:
+        # Fallback 1: Use librarian recommendations
+        librarian_recs = load_librarian_recommendations()
+        unread_librarian_recs = [book for book in librarian_recs if book not in user_read_books]
+        
+        if unread_librarian_recs:
+            return unread_librarian_recs[:k]
+        
+        # Fallback 2: Choose randomly from all unread books
+        all_books = get_all_books(checkouts)
+        unread_books = [book for book in all_books if book not in user_read_books]
+        
+        if unread_books:
+            random.shuffle(unread_books)
+            return unread_books[:k]
+        
         return []
 
     # sort by prob, highest first, take top-k
@@ -130,10 +168,16 @@ def run_experiment():
     print("=== Learned Transitions (current_book -> next_book) ===")
     print(transitions, "\n")
 
+    print("=== Librarian Recommendations ===")
+    print(load_librarian_recommendations(), "\n")
+
     print("=== Experiment: Recommendations per user ===")
     for user_id in checkouts["user_id"].unique():
         recs = recommend_next_books_for_user(user_id, checkouts, transitions, k=3)
-        print(f"User {user_id}: last book = {checkouts[checkouts['user_id']==user_id].sort_values('timestamp').iloc[-1]['book_id']}")
+        user_hist = checkouts[checkouts['user_id']==user_id].sort_values('timestamp')
+        last_book = user_hist.iloc[-1]['book_id']
+        read_books = user_hist['book_id'].tolist()
+        print(f"User {user_id}: last book = {last_book}, read books = {read_books}")
         print(f"  Recommended next books: {recs}\n")
 
 
