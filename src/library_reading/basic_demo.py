@@ -1,5 +1,5 @@
 """
-next_book_experiment.py
+basic_demo.py
 
 Simplest possible example of:
 - Ingesting full checkout history
@@ -7,8 +7,7 @@ Simplest possible example of:
 - Running a tiny experiment over all users
 
 Run:
-    pip install pandas
-    python next_book_experiment.py
+    python basic_demo.py
 """
 
 from collections import Counter
@@ -61,6 +60,33 @@ def get_all_books(checkouts: pd.DataFrame) -> List[str]:
     return list(set(checkout_books + librarian_books))
 
 
+def recommend_popular_books_for_user(
+    user_id: str,
+    checkouts: pd.DataFrame,
+    k: int = 3,
+) -> List[str]:
+    """
+    Recommend most popular books that the user hasn't read yet.
+    
+    Popularity = checkout count across all users.
+    """
+    user_hist = checkouts[checkouts["user_id"] == user_id]
+    user_read_books = set(user_hist["book_id"].tolist())
+    
+    # Count popularity of all books
+    popularity = (
+        checkouts.groupby("book_id")
+        .size()
+        .reset_index(name="checkout_count")
+        .sort_values("checkout_count", ascending=False)
+    )
+    
+    # Filter out books the user has already read
+    unread_popular = popularity[~popularity["book_id"].isin(user_read_books)]
+    
+    return unread_popular["book_id"].head(k).tolist()
+
+
 def build_transition_model(checkouts: pd.DataFrame) -> pd.DataFrame:
     """
     Build a simple next-book transition table.
@@ -103,7 +129,7 @@ def recommend_next_books_for_user(
     checkouts: pd.DataFrame,
     transitions: pd.DataFrame,
     k: int = 3,
-) -> List[str]:
+) -> tuple[List[str], str]:
     """
     Recommend top-k next books for a user, based on the user's last book.
 
@@ -112,15 +138,20 @@ def recommend_next_books_for_user(
     - Look up all next_book candidates for that current_book.
     - Rank by probability.
     - Return top-k book_ids.
-    - If no recommendations, fall back to librarian recommendations.
-    - If all librarian recommendations are read, choose randomly from unread books.
+    - If no recommendations, fall back to:
+      1. Popularity-based recommendations
+      2. Librarian recommendations
+      3. Random unread books
+    
+    Returns:
+        tuple: (recommended_books, strategy_used)
     """
     user_hist = (
         checkouts[checkouts["user_id"] == user_id]
         .sort_values("timestamp")
     )
     if user_hist.empty:
-        return []
+        return [], "no_history"
 
     last_book = user_hist.iloc[-1]["book_id"]
     user_read_books = set(user_hist["book_id"].tolist())
@@ -128,27 +159,32 @@ def recommend_next_books_for_user(
     # all transitions from last_book
     candidates = transitions[transitions["current_book"] == last_book]
 
-    if candidates.empty:
-        # Fallback 1: Use librarian recommendations
-        librarian_recs = load_librarian_recommendations()
-        unread_librarian_recs = [book for book in librarian_recs if book not in user_read_books]
-        
-        if unread_librarian_recs:
-            return unread_librarian_recs[:k]
-        
-        # Fallback 2: Choose randomly from all unread books
-        all_books = get_all_books(checkouts)
-        unread_books = [book for book in all_books if book not in user_read_books]
-        
-        if unread_books:
-            random.shuffle(unread_books)
-            return unread_books[:k]
-        
-        return []
+    if not candidates.empty:
+        # Primary strategy: transition-based
+        top = candidates.sort_values("prob", ascending=False).head(k)
+        return top["next_book"].tolist(), "transition"
 
-    # sort by prob, highest first, take top-k
-    top = candidates.sort_values("prob", ascending=False).head(k)
-    return top["next_book"].tolist()
+    # Fallback 1: Use popularity-based recommendations
+    popular_recs = recommend_popular_books_for_user(user_id, checkouts, k=k)
+    if popular_recs:
+        return popular_recs, "popularity"
+    
+    # Fallback 2: Use librarian recommendations
+    librarian_recs = load_librarian_recommendations()
+    unread_librarian_recs = [book for book in librarian_recs if book not in user_read_books]
+    
+    if unread_librarian_recs:
+        return unread_librarian_recs[:k], "librarian"
+    
+    # Fallback 3: Choose randomly from all unread books
+    all_books = get_all_books(checkouts)
+    unread_books = [book for book in all_books if book not in user_read_books]
+    
+    if unread_books:
+        random.shuffle(unread_books)
+        return unread_books[:k], "random"
+    
+    return [], "all_read"
 
 
 def run_experiment():
@@ -168,17 +204,35 @@ def run_experiment():
     print("=== Learned Transitions (current_book -> next_book) ===")
     print(transitions, "\n")
 
+    print("=== Book Popularity (Overall Checkout Counts) ===")
+    popularity = (
+        checkouts.groupby("book_id")
+        .size()
+        .reset_index(name="checkout_count")
+        .sort_values("checkout_count", ascending=False)
+    )
+    print(popularity, "\n")
+
     print("=== Librarian Recommendations ===")
     print(load_librarian_recommendations(), "\n")
 
     print("=== Experiment: Recommendations per user ===")
     for user_id in checkouts["user_id"].unique():
-        recs = recommend_next_books_for_user(user_id, checkouts, transitions, k=3)
+        recs, strategy = recommend_next_books_for_user(user_id, checkouts, transitions, k=3)
         user_hist = checkouts[checkouts['user_id']==user_id].sort_values('timestamp')
         last_book = user_hist.iloc[-1]['book_id']
         read_books = user_hist['book_id'].tolist()
+        
         print(f"User {user_id}: last book = {last_book}, read books = {read_books}")
-        print(f"  Recommended next books: {recs}\n")
+        print(f"  Strategy: {strategy}")
+        print(f"  Recommended next books: {recs}")
+        
+        # Show why transition might be empty
+        if strategy != "transition":
+            has_transitions = not transitions[transitions["current_book"] == last_book].empty
+            if not has_transitions:
+                print(f"  → No transitions learned from '{last_book}' (no user read a book after it)")
+        print()
 
 
 if __name__ == "__main__":
